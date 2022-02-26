@@ -1,26 +1,23 @@
+import java.lang.Math
 import java.util.concurrent.locks.Lock
 import java.util.concurrent.locks.ReentrantLock
-import java.lang.Math
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicLongArray
 
 val THREAD_COUNT = 4
 
-@volatile
-var primes = new Array[Long](1)
+val lock = ReentrantLock()
 
-@volatile
-var pendingCandidates = new Array[Long](THREAD_COUNT) // candidates that are currently being tested for primality
+var primes = new AtomicLongArray(1)
+val nextCandidate = new AtomicLong(0) // next candidate to be tested for a prime
+var pendingCandidates = new AtomicLongArray(THREAD_COUNT)
 
 @volatile
 var primesCount = 0 // number of primes found so far
-
-val nextCandidate = new AtomicLong(0) // next candidate to be tested for a prime
-
-val lock = ReentrantLock()
+@volatile
+var contiguousPrimesCount = 0 // number of contiguous primes found so far
 
 var N = 0 // total number of primes to be computed
-
-
 
 object ConcurrentApplication {
   def main(args: Array[String]) = {
@@ -29,10 +26,11 @@ object ConcurrentApplication {
     
     N = args(0).toInt
     
-    primes = new Array[Long](N)
+    primes = new AtomicLongArray(N)
     
-    primes(0) = 2
+    primes.set(0, 2)
     primesCount = 1
+    contiguousPrimesCount = 1
     nextCandidate.set(3)
     
     val threads = new Array[ComputeThread](THREAD_COUNT)
@@ -46,7 +44,7 @@ object ConcurrentApplication {
     }
     
     val tN = java.lang.System.currentTimeMillis()
-    println(primes(N-1))
+    println(primes.get(N-1))
     println("Time taken: " + (tN - t0))
   }
 }
@@ -57,9 +55,9 @@ class ComputeThread(val threadId: Int) extends Thread {
   var localPrimesCount = 0
   override def run() = {
 
-    while(primesCount < N){
-      val candidate = nextCandidate.getAndIncrement()
-      pendingCandidates(threadId) = candidate
+    while(contiguousPrimesCount < N){
+      val candidate = nextCandidate.getAndAdd(2)
+      pendingCandidates.set(threadId, candidate)
       var currentProgress = getCurrentProgress()
 
       while(currentProgress * currentProgress < candidate) {
@@ -68,7 +66,7 @@ class ComputeThread(val threadId: Int) extends Thread {
       }
 
       // fill in local primes
-      fillInLocalPrimes()
+      fillInLocalPrimes(candidate)
 
       // compute if the candidate is prime
       val isCandidatePrime = checkPrime(candidate)
@@ -80,17 +78,18 @@ class ComputeThread(val threadId: Int) extends Thread {
 
   def getCurrentProgress(): Long = {
     // returns the MIN(pendingCandidates) - 1
-    var result = pendingCandidates(0)
-    for(i <- 1 to pendingCandidates.length-1) if(pendingCandidates(i) < result) {
-      result = pendingCandidates(i)
+    var result = pendingCandidates.get(0)
+    for(i <- 1 to THREAD_COUNT-1) if(pendingCandidates.get(i) < result) {
+      result = pendingCandidates.get(i)
     }
     return Math.max(result-1, 2)
   }
 
-  def fillInLocalPrimes() = {
+  def fillInLocalPrimes(candidate: Long) = {
     val currentProgress = getCurrentProgress()
-    while(localPrimesCount < primesCount && primes(localPrimesCount) <= currentProgress) {
-      localPrimes(localPrimesCount) = primes(localPrimesCount)
+    val currentContiguousPrimesCount = contiguousPrimesCount
+    while(localPrimesCount < currentContiguousPrimesCount) {
+      localPrimes(localPrimesCount) = primes.get(localPrimesCount)
       localPrimesCount += 1
     }
   }
@@ -110,15 +109,19 @@ class ComputeThread(val threadId: Int) extends Thread {
   def publishResult(candidate:Long) = {
     lock.lock()
     try {
-      if(primesCount < N){
-        var index = primesCount
-        while((index-1) > 0 && primes(index-1) > candidate){
-          primes(index) = primes(index-1)
+      if(contiguousPrimesCount < N){
+        var index = Math.min(primesCount, N)
+        while((index-1) > 0 && primes.get(index-1) > candidate){
+          if(index < N) primes.set(index, primes.get(index-1)) // if index == N, we discard the computed value
           index -= 1
         }
         
-        primes(index) = candidate
+        if(index < N) primes.set(index, candidate) // if index == N, we discard the computed value
         primesCount += 1
+
+        val currentProgress = getCurrentProgress() // all primes up to this point are already in final form
+        val currentPrimesCount = Math.min(primesCount, N)
+        while(contiguousPrimesCount < currentPrimesCount && primes.get(contiguousPrimesCount) <= currentProgress+1) contiguousPrimesCount += 1
       }
     } finally {
       lock.unlock()
