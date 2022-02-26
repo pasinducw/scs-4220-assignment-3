@@ -3,7 +3,7 @@ import java.util.concurrent.locks.ReentrantLock
 import java.lang.Math
 import java.util.concurrent.atomic.AtomicLong
 
-val THREAD_COUNT = 3
+val THREAD_COUNT = 4
 
 @volatile
 var primes = new Array[Long](1)
