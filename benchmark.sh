@@ -8,6 +8,6 @@ for rep in {1..20}
       do
         concurrent=$(scala3 -J-Xmx32g ConcurrentApplication.scala ${limit} | grep Time | grep -Eo '[0-9][0-9]*')
         sequential=$(scala3 -J-Xmx32g SequentialApplication.scala ${limit} | grep Time | grep -Eo '[0-9][0-9]*')
-        echo "$limit;$concurrent;$sequential;"
+        echo "$limit,$concurrent,$sequential"
     done
 done
